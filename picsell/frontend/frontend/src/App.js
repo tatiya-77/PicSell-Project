@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 function App() {
@@ -32,6 +32,23 @@ function App() {
 
   const [sales, setSales] = useState([]);
 
+  // ฟังก์ชันดึงข้อมูลสินค้า
+  const fetchProducts = useCallback(async () => {
+    try {
+      const res = await axios.get('http://localhost:5000/api/products');
+      setProducts(res.data);
+    } catch (err) { console.error("Fetch failed", err); }
+  }, []);
+
+  // ฟังก์ชันดึงข้อมูลยอดขาย (แก้ Warning ด้วย useCallback)
+  const fetchSales = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await axios.get(`http://localhost:5000/api/sales/${user.id}`);
+      setSales(res.data);
+    } catch (err) { console.error("Fetch sales failed", err); }
+  }, [user]);
+
   useEffect(() => {
     const savedUser = localStorage.getItem('user');
     const savedCollection = localStorage.getItem('collection');
@@ -43,27 +60,13 @@ function App() {
     }
     if (savedCollection) setMyCollection(JSON.parse(savedCollection));
     fetchProducts();
-  }, []);
+  }, [fetchProducts]);
 
   useEffect(() => {
     if (currentView === 'profile' && user) {
         fetchSales();
     }
-  }, [currentView, user]);
-
-  const fetchProducts = async () => {
-    try {
-      const res = await axios.get('http://localhost:5000/api/products');
-      setProducts(res.data);
-    } catch (err) { console.error("Fetch failed", err); }
-  };
-
-  const fetchSales = async () => {
-    try {
-      const res = await axios.get(`http://localhost:5000/api/sales/${user.id}`);
-      setSales(res.data);
-    } catch (err) { console.error("Fetch sales failed", err); }
-  };
+  }, [currentView, user, fetchSales]);
 
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -225,7 +228,6 @@ function App() {
                   <div key={i} className="bg-white p-5 border group relative">
                     <button onClick={() => {setItemToDelete({index: i, type:'col', title: p.title}); setShowDeleteModal(true);}} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 bg-black text-white text-[8px] px-2 py-1">X</button>
                     <img src={`http://localhost:5000${p.thumbnail_path}`} className="w-full aspect-[3/4] object-cover mb-2" alt="" />
-                    {/* เพิ่มบรรทัดชื่อผลงานกลับมาตรงนี้ */}
                     <p className="text-[10px] font-bold uppercase truncate mb-3">{p.title}</p> 
                     <button onClick={() => downloadImage(`http://localhost:5000${p.thumbnail_path}`, `${p.title}.jpg`)} className="w-full bg-gray-100 py-2 text-[8px] uppercase font-bold">Download</button>
                   </div>
