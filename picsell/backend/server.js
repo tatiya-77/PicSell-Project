@@ -36,7 +36,6 @@ const upload = multer({ storage: storage });
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ================= USER API =================
-// (โค้ด Register, Login, Reset Password, Update User เหมือนเดิมของคุณ...)
 app.post('/api/register', (req, res) => {
     const { username, email, password } = req.body;
     const sql = "INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, 'customer')";
@@ -77,6 +76,49 @@ app.put('/api/users/:id', (req, res) => {
     db.query(sql, [username, password, id], (err) => {
         if (err) return res.status(500).json({ message: "ชื่อผู้ใช้นี้อาจมีผู้อื่นใช้แล้ว" });
         res.json({ success: true, message: "อัปเดตข้อมูลสำเร็จ" });
+    });
+});
+
+// ================= ADMIN API (เพิ่มดึงข้อมูลรายคน) =================
+
+// ดึงรายชื่อผู้ใช้ทั้งหมด (สำหรับหน้า Dashboard)
+app.get('/api/admin/users', (req, res) => {
+    db.query("SELECT id, username, email FROM users", (err, result) => {
+        if (err) return res.status(500).json({ message: "Database Error", error: err });
+        res.json(result);
+    });
+});
+
+// ดึงข้อมูลผู้ใช้รายบุคคล (สำหรับ Admin View Profile)
+app.get('/api/admin/users/:id', (req, res) => {
+    db.query("SELECT id, username, email FROM users WHERE id = ?", [req.params.id], (err, result) => {
+        if (err) return res.status(500).json({ message: "Database Error" });
+        if (result.length === 0) return res.status(404).json({ message: "User not found" });
+        res.json(result[0]);
+    });
+});
+
+// ดึงผลงานทั้งหมด
+app.get('/api/admin/products', (req, res) => {
+    db.query("SELECT * FROM products", (err, result) => {
+        if (err) return res.status(500).json({ message: "Database Error", error: err });
+        res.json(result);
+    });
+});
+
+// ลบผู้ใช้งาน
+app.delete('/api/admin/users/:id', (req, res) => {
+    db.query("DELETE FROM users WHERE id = ?", [req.params.id], (err, result) => {
+        if (err) return res.status(500).json({ message: "Delete user failed" });
+        res.json({ message: "User deleted successfully" });
+    });
+});
+
+// ลบรูปภาพ (Admin Power)
+app.delete('/api/admin/products/:id', (req, res) => {
+    db.query("DELETE FROM products WHERE id = ?", [req.params.id], (err, result) => {
+        if (err) return res.status(500).json({ message: "Delete artwork failed" });
+        res.json({ message: "Artwork deleted by admin" });
     });
 });
 
@@ -124,21 +166,15 @@ app.delete('/api/products/:id', (req, res) => {
     });
 });
 
-// ================= ORDER & SALES API (เพิ่ม/แก้ไขตรงนี้) =================
-
-// 1. ปรับปรุง Checkout ให้บันทึกลงตาราง orders ด้วย
+// ================= ORDER & SALES API =================
 app.post('/api/checkout', (req, res) => {
     const { cart, buyer_id } = req.body;
     if (!cart || cart.length === 0) return res.status(400).json({ message: "ไม่มีสินค้าในตะกร้า" });
 
     const promises = cart.map(item => {
         return new Promise((resolve, reject) => {
-            // ตัดสต็อกสินค้า
             db.query("UPDATE products SET stock = stock - 1 WHERE id = ? AND stock > 0", [item.id], (err, result) => {
                 if (err) return reject(err);
-                
-                // บันทึกข้อมูลการซื้อขายลงในตาราง orders
-                // item.user_id คือ seller_id (เจ้าของภาพ)
                 const sqlOrder = "INSERT INTO orders (product_id, buyer_id, seller_id, amount, status) VALUES (?, ?, ?, ?, 'paid')";
                 db.query(sqlOrder, [item.id, buyer_id, item.user_id, item.price], (orderErr) => {
                     if (orderErr) reject(orderErr);
@@ -153,7 +189,6 @@ app.post('/api/checkout', (req, res) => {
         .catch(err => res.status(500).json({ message: "Checkout failed", error: err }));
 });
 
-// 2. API สำหรับดึงรายงานยอดขายของ "เจ้าของภาพ" (Seller)
 app.get('/api/sales/:seller_id', (req, res) => {
     const { seller_id } = req.params;
     const sql = `

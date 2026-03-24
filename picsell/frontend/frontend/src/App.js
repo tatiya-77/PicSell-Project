@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import AdminDashboard from './AdminDashboard';
 
 function App() {
   const [products, setProducts] = useState([]);
@@ -20,6 +21,22 @@ function App() {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editData, setEditData] = useState({ username: '', password: '' });
   
+  // --- ส่วนที่เพิ่มใหม่สำหรับ Admin ดูโปรไฟล์ผู้อื่น ---
+  const [viewingUser, setViewingUser] = useState(null); 
+  const [viewingSales, setViewingSales] = useState([]);
+
+  const handleAdminViewProfile = async (targetUserId) => {
+    try {
+        const userRes = await axios.get(`http://localhost:5000/api/admin/users/${targetUserId}`);
+        const salesRes = await axios.get(`http://localhost:5000/api/sales/${targetUserId}`);
+        setViewingUser(userRes.data);
+        setViewingSales(salesRes.data);
+        setCurrentView('admin_view_profile');
+        window.scrollTo(0, 0);
+    } catch (err) { alert("ไม่สามารถดึงข้อมูลโปรไฟล์ได้"); }
+  };
+  // ------------------------------------------
+
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState('');
   const [stock, setStock] = useState(1);
@@ -32,7 +49,6 @@ function App() {
 
   const [sales, setSales] = useState([]);
 
-  // ฟังก์ชันดึงข้อมูลสินค้า
   const fetchProducts = useCallback(async () => {
     try {
       const res = await axios.get('http://localhost:5000/api/products');
@@ -40,7 +56,6 @@ function App() {
     } catch (err) { console.error("Fetch failed", err); }
   }, []);
 
-  // ฟังก์ชันดึงข้อมูลยอดขาย (แก้ Warning ด้วย useCallback)
   const fetchSales = useCallback(async () => {
     if (!user) return;
     try {
@@ -205,7 +220,53 @@ function App() {
       </nav>
 
       <div className="p-10 max-w-7xl mx-auto">
-        {currentView === 'profile' ? (
+        {/* --- หน้า Profile ของผู้อื่น (สำหรับ Admin เข้าชม) --- */}
+        {currentView === 'admin_view_profile' && viewingUser ? (
+            <div className="animate-fadeIn">
+                <button onClick={() => setCurrentView('profile')} className="text-[10px] uppercase tracking-widest mb-10 border border-black px-4 py-2">← Back to Dashboard</button>
+                <div className="mb-10 border-b pb-10">
+                    <h2 className="text-4xl tracking-widest uppercase font-light">User Profile (Admin View)</h2>
+                    <p className="text-[10px] text-blue-500 mt-3 italic uppercase font-bold">Username: {viewingUser.username}</p>
+                    <p className="text-[10px] text-gray-400 uppercase">Email: {viewingUser.email}</p>
+                </div>
+
+                <h3 className="text-[10px] font-bold tracking-widest uppercase mb-10 border-l-2 border-blue-400 pl-4">Artworks by {viewingUser.username}</h3>
+                <div className="grid grid-cols-4 gap-10 mb-20">
+                    {products.filter(p => p.user_id === viewingUser.id).map((p) => (
+                        <div key={p.id} className="bg-white p-5 border">
+                            <img src={`http://localhost:5000${p.thumbnail_path}`} className="w-full aspect-[3/4] object-cover mb-2" alt="" />
+                            <p className="text-[10px] font-bold uppercase truncate">{p.title}</p>
+                            <p className="text-[9px] text-gray-400 uppercase">Price: ฿{p.price}</p>
+                        </div>
+                    ))}
+                </div>
+
+                <h3 className="text-[10px] font-bold tracking-widest uppercase mb-8 border-l-2 border-green-400 pl-4">Sales Report for {viewingUser.username}</h3>
+                <div className="bg-white border overflow-hidden shadow-sm mb-20">
+                    <table className="w-full text-left text-[10px] uppercase">
+                        <thead>
+                            <tr className="bg-gray-50 border-b">
+                                <th className="p-4">Artwork</th>
+                                <th className="p-4">Buyer</th>
+                                <th className="p-4">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {viewingSales.map((s) => (
+                                <tr key={s.id} className="border-b">
+                                    <td className="p-4 font-bold">{s.product_name}</td>
+                                    <td className="p-4 text-gray-400">{s.buyer_name}</td>
+                                    <td className="p-4">฿{s.amount}</td>
+                                </tr>
+                            ))}
+                            {viewingSales.length === 0 && (
+                                <tr><td colSpan="3" className="p-10 text-center text-gray-400">No sales history</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        ) : currentView === 'profile' ? (
           <div className="animate-fadeIn">
             <div className="mb-10 border-b pb-10 flex justify-between items-end">
               <div><h2 className="text-4xl tracking-widest uppercase font-light">My Account</h2><p className="text-[10px] text-gray-400 mt-3 italic uppercase">Artist: {user?.username}</p></div>
@@ -274,6 +335,13 @@ function App() {
                     </tbody>
                 </table>
             </div>
+
+            {user?.username === 'admin' && (
+              <div className="mt-20 border-t-4 border-black pt-10">
+                {/* ส่งฟังก์ชัน handleAdminViewProfile ไปให้ AdminDashboard ใช้งาน */}
+                <AdminDashboard onViewProfile={handleAdminViewProfile} />
+              </div>
+            )}
 
           </div>
         ) : currentView === 'upload' ? (
