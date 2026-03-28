@@ -338,7 +338,6 @@ function App() {
 
             {user?.username === 'admin' && (
               <div className="mt-20 border-t-4 border-black pt-10">
-                {/* ส่งฟังก์ชัน handleAdminViewProfile ไปให้ AdminDashboard ใช้งาน */}
                 <AdminDashboard onViewProfile={handleAdminViewProfile} />
               </div>
             )}
