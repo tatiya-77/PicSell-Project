@@ -16,12 +16,13 @@ function App() {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [isResetMode, setIsResetMode] = useState(false);
   const [authData, setAuthData] = useState({ username: '', email: '', password: '' });
-  const [resetData, setResetData] = useState({ username: '', newPassword: '' });
+  const [resetData, setResetData] = useState({ username: '', email: '', newPassword: '' });
   const [isSuccess, setIsSuccess] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  
+  // แก้ไขจุดที่ Error: ตั้งค่าเริ่มต้นเป็นค่าว่างก่อน
   const [editData, setEditData] = useState({ username: '', password: '' });
   
-  // --- ส่วนที่เพิ่มใหม่สำหรับ Admin ดูโปรไฟล์ผู้อื่น ---
   const [viewingUser, setViewingUser] = useState(null); 
   const [viewingSales, setViewingSales] = useState([]);
 
@@ -35,7 +36,6 @@ function App() {
         window.scrollTo(0, 0);
     } catch (err) { alert("ไม่สามารถดึงข้อมูลโปรไฟล์ได้"); }
   };
-  // ------------------------------------------
 
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState('');
@@ -71,6 +71,7 @@ function App() {
         const parsedUser = JSON.parse(savedUser);
         setUser(parsedUser);
         setIsLoggedIn(true);
+        // ย้ายการเซ็ตค่า editData มาไว้ตรงนี้หลังจากประกาศ parsedUser แล้ว
         setEditData({ username: parsedUser.username, password: '' });
     }
     if (savedCollection) setMyCollection(JSON.parse(savedCollection));
@@ -100,7 +101,7 @@ function App() {
   };
 
   const switchToResetMode = () => {
-    setResetData({ ...resetData, username: authData.username });
+    setResetData({ ...resetData, username: authData.username, email: authData.email });
     setIsResetMode(true);
   };
 
@@ -109,6 +110,7 @@ function App() {
     try {
       const res = await axios.post('http://localhost:5000/api/reset-password', {
         username: resetData.username,
+        email: resetData.email,
         newPassword: resetData.newPassword
       });
       alert(res.data.message);
@@ -220,7 +222,6 @@ function App() {
       </nav>
 
       <div className="p-10 max-w-7xl mx-auto">
-        {/* --- หน้า Profile ของผู้อื่น (สำหรับ Admin เข้าชม) --- */}
         {currentView === 'admin_view_profile' && viewingUser ? (
             <div className="animate-fadeIn">
                 <button onClick={() => setCurrentView('profile')} className="text-[10px] uppercase tracking-widest mb-10 border border-black px-4 py-2">← Back to Dashboard</button>
@@ -384,7 +385,12 @@ function App() {
                 <input type="text" placeholder="Username" value={isResetMode ? resetData.username : authData.username} className="w-full border-b py-2 text-sm outline-none" 
                    onChange={e => isResetMode ? setResetData({...resetData, username: e.target.value}) : setAuthData({...authData, username: e.target.value})} required />
                 
-                {isRegisterMode && !isResetMode && <input type="email" placeholder="Email" value={authData.email} className="w-full border-b py-2 text-sm outline-none" onChange={e => setAuthData({...authData, email: e.target.value})} required />}
+                {isResetMode ? (
+                  <input type="email" placeholder="Email" value={resetData.email} className="w-full border-b py-2 text-sm outline-none" 
+                  onChange={e => setResetData({...resetData, email: e.target.value})} required />
+                ) : (
+                  isRegisterMode && <input type="email" placeholder="Email" value={authData.email} className="w-full border-b py-2 text-sm outline-none" onChange={e => setAuthData({...authData, email: e.target.value})} required />
+                )}
                 
                 <input type="password" placeholder={isResetMode ? "New Password" : "Password"} value={isResetMode ? resetData.newPassword : authData.password} className="w-full border-b py-2 text-sm outline-none" 
                    onChange={e => isResetMode ? setResetData({...resetData, newPassword: e.target.value}) : setAuthData({...authData, password: e.target.value})} required />
