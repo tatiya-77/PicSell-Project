@@ -12,6 +12,12 @@ function App() {
   const [showCart, setShowCart] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('');
+  
+  // --- ส่วนสำหรับระบบแนบสลิป ---
+  const [paymentStep, setPaymentStep] = useState(1); // 1: เลือกช่องทาง, 2: สรุปยอด+แนบสลิป
+  const [selectedFile, setSelectedFile] = useState(null);
+  // ----------------------------------
+
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [isResetMode, setIsResetMode] = useState(false);
@@ -20,11 +26,12 @@ function App() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   
-  // แก้ไขจุดที่ Error: ตั้งค่าเริ่มต้นเป็นค่าว่างก่อน
   const [editData, setEditData] = useState({ username: '', password: '' });
   
   const [viewingUser, setViewingUser] = useState(null); 
   const [viewingSales, setViewingSales] = useState([]);
+
+  const [summary, setSummary] = useState({ grandTotal: 0, dailySummary: [] });
 
   const handleAdminViewProfile = async (targetUserId) => {
     try {
@@ -64,6 +71,14 @@ function App() {
     } catch (err) { console.error("Fetch sales failed", err); }
   }, [user]);
 
+  const fetchSummary = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await axios.get(`http://localhost:5000/api/sales-summary/${user.id}`);
+      setSummary(res.data);
+    } catch (err) { console.error("Fetch summary failed", err); }
+  }, [user]);
+
   useEffect(() => {
     const savedUser = localStorage.getItem('user');
     const savedCollection = localStorage.getItem('collection');
@@ -71,7 +86,6 @@ function App() {
         const parsedUser = JSON.parse(savedUser);
         setUser(parsedUser);
         setIsLoggedIn(true);
-        // ย้ายการเซ็ตค่า editData มาไว้ตรงนี้หลังจากประกาศ parsedUser แล้ว
         setEditData({ username: parsedUser.username, password: '' });
     }
     if (savedCollection) setMyCollection(JSON.parse(savedCollection));
@@ -81,8 +95,9 @@ function App() {
   useEffect(() => {
     if (currentView === 'profile' && user) {
         fetchSales();
+        fetchSummary(); 
     }
-  }, [currentView, user, fetchSales]);
+  }, [currentView, user, fetchSales, fetchSummary]);
 
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -177,24 +192,39 @@ function App() {
     } catch (err) { alert("แก้ไขไม่สำเร็จ"); }
   };
 
+  // --- ปรับปรุงฟังก์ชัน confirmPayment ให้ส่งข้อมูลแบบ FormData ---
   const confirmPayment = async () => {
-    if (!paymentMethod) return alert("กรุณาเลือกช่องทางชำระเงิน");
+    if (!selectedFile) return alert("กรุณาแนบสลิปเงินโอน");
+
+    const formData = new FormData();
+    formData.append('slip', selectedFile);
+    formData.append('buyer_id', user.id);
+    formData.append('cart', JSON.stringify(cart)); // แปลงเป็น String เพื่อส่งผ่าน FormData
+    formData.append('payment_method', paymentMethod);
+
     try {
-      await axios.post('http://localhost:5000/api/checkout', { 
-        cart, 
-        buyer_id: user.id 
+      const res = await axios.post('http://localhost:5000/api/checkout', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
-      const purchased = cart.map(c => ({ ...products.find(p => p.id === c.id), buyer_id: user.id }));
-      const newCol = [...myCollection, ...purchased];
-      setMyCollection(newCol);
-      localStorage.setItem('collection', JSON.stringify(newCol));
       
-      setCart([]); 
-      setShowCart(false); 
-      setShowPaymentModal(false); 
-      setIsSuccess(true); 
-      fetchProducts();
-    } catch (err) { alert("Payment failed"); }
+      if (res.data.success) {
+        const purchased = cart.map(c => ({ ...products.find(p => p.id === c.id), buyer_id: user.id }));
+        const newCol = [...myCollection, ...purchased];
+        setMyCollection(newCol);
+        localStorage.setItem('collection', JSON.stringify(newCol));
+        
+        setCart([]); 
+        setShowCart(false); 
+        setShowPaymentModal(false); 
+        setPaymentStep(1); 
+        setSelectedFile(null); 
+        setIsSuccess(true); 
+        fetchProducts();
+      }
+    } catch (err) { 
+      console.error(err);
+      alert(err.response?.data?.message || "Payment failed"); 
+    }
   };
 
   const downloadImage = (url, fileName) => {
@@ -310,7 +340,45 @@ function App() {
               ))}
             </div>
 
-            <h3 className="text-[10px] font-bold tracking-widest uppercase mb-8 border-l-2 border-green-400 pl-4">Sales Report</h3>
+            <h3 className="text-[10px] font-bold tracking-widest uppercase mb-8 border-l-2 border-green-400 pl-4">Sales Summary</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                <div className="p-6 bg-black text-white border border-black shadow-sm">
+                    <p className="text-[9px] uppercase tracking-[0.2em] mb-2 opacity-60">Total Revenue</p>
+                    <p className="text-3xl font-light">฿{Number(summary.grandTotal || 0).toLocaleString()}</p>
+                </div>
+                <div className="p-6 bg-white border border-black shadow-sm">
+                    <p className="text-[9px] uppercase tracking-[0.2em] mb-2 text-gray-400">Total Sales</p>
+                    <p className="text-3xl font-light">{sales.length} <span className="text-xs ml-1 font-normal">Items</span></p>
+                </div>
+            </div>
+
+            <div className="mb-10 border border-gray-100 shadow-sm overflow-hidden">
+                <div className="bg-gray-50 p-3 border-b">
+                    <span className="text-[9px] font-bold uppercase tracking-widest">Daily Performance</span>
+                </div>
+                <table className="w-full text-left text-[10px] uppercase">
+                    <thead>
+                        <tr className="border-b bg-white text-gray-400">
+                            <th className="p-4 font-medium">Date</th>
+                            <th className="p-4 font-medium">Units Sold</th>
+                            <th className="p-4 text-right font-medium">Daily Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {summary.dailySummary.length > 0 ? summary.dailySummary.map((day, idx) => (
+                            <tr key={idx} className="border-b hover:bg-gray-50 transition-colors bg-white">
+                                <td className="p-4">{new Date(day.date).toLocaleDateString()}</td>
+                                <td className="p-4">{day.count} Units</td>
+                                <td className="p-4 text-right font-bold text-green-600">฿{Number(day.dailyTotal).toLocaleString()}</td>
+                            </tr>
+                        )) : (
+                            <tr><td colSpan="3" className="p-10 text-center text-gray-400 italic bg-white">No sales summary data</td></tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
+            <h3 className="text-[10px] font-bold tracking-widest uppercase mb-8 border-l-2 border-green-400 pl-4 opacity-50">Sales History</h3>
             <div className="bg-white border overflow-hidden shadow-sm mb-20">
                 <table className="w-full text-left text-[10px] uppercase">
                     <thead>
@@ -438,12 +506,63 @@ function App() {
         </div>
       )}
 
+      {/* --- ส่วนที่ปรับปรุง: Payment Modal ให้มีช่องแนบสลิปและปุ่มที่ทำงานร่วมกับ confirmPayment ใหม่ --- */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-6 backdrop-blur-sm">
           <div className="bg-white p-10 max-w-sm w-full text-center shadow-2xl">
-            <h2 className="text-sm font-bold uppercase mb-6 border-b pb-4 tracking-widest">Payment</h2>
-            <div className="space-y-3 mb-8 text-left">{['Credit Card', 'Thai QR Payment', 'PayPal'].map(method => (<label key={method} className="flex items-center gap-3 p-4 border cursor-pointer hover:bg-gray-50 transition-all"><input type="radio" name="pay" onChange={() => setPaymentMethod(method)} className="accent-black" /><span className="text-[11px] uppercase tracking-wider">{method}</span></label>))}</div>
-            <div className="flex gap-2"><button onClick={() => setShowPaymentModal(false)} className="flex-1 border py-3 text-[10px] uppercase font-bold">Cancel</button><button onClick={confirmPayment} className="flex-1 bg-black text-white py-3 text-[10px] uppercase font-bold tracking-widest">Confirm</button></div>
+            
+            {paymentStep === 1 ? (
+                <div className="animate-fadeIn">
+                    <h2 className="text-sm font-bold uppercase mb-6 border-b pb-4 tracking-widest">Select Payment Method</h2>
+                    <div className="space-y-3 mb-8 text-left">
+                        {['Thai QR Payment', 'Credit Card', 'PayPal'].map(method => (
+                            <label key={method} className="flex items-center gap-3 p-4 border cursor-pointer hover:bg-gray-50 transition-all">
+                                <input 
+                                    type="radio" 
+                                    name="pay" 
+                                    onChange={() => setPaymentMethod(method)} 
+                                    className="accent-black" 
+                                />
+                                <span className="text-[11px] uppercase tracking-wider">{method}</span>
+                            </label>
+                        ))}
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={() => setShowPaymentModal(false)} className="flex-1 border py-3 text-[10px] uppercase font-bold">Cancel</button>
+                        <button 
+                            onClick={() => paymentMethod ? setPaymentStep(2) : alert('กรุณาเลือกช่องทาง')} 
+                            className="flex-1 bg-black text-white py-3 text-[10px] uppercase font-bold tracking-widest"
+                        >
+                            Next
+                        </button>
+                    </div>
+                </div>
+            ) : (
+                <div className="animate-fadeIn">
+                    <h2 className="text-sm font-bold uppercase mb-2 tracking-widest">Confirm Payment</h2>
+                    <p className="text-[10px] text-gray-400 uppercase mb-6 italic">Via: {paymentMethod}</p>
+                    
+                    <div className="bg-gray-50 p-6 mb-6 border-y">
+                        <p className="text-[10px] uppercase text-gray-500 mb-1">Total Amount to Pay</p>
+                        <p className="text-2xl font-bold">฿{cart.reduce((s, i) => s + Number(i.price), 0).toLocaleString()}</p>
+                    </div>
+
+                    <div className="mb-8 text-left">
+                        <label className="text-[9px] uppercase font-bold tracking-widest text-gray-400 block mb-2">Upload Transfer Slip</label>
+                        <input 
+                            type="file" 
+                            accept="image/*"
+                            onChange={(e) => setSelectedFile(e.target.files[0])} // เก็บไฟล์ลง selectedFile
+                            className="w-full text-[10px] border p-2 cursor-pointer bg-white"
+                        />
+                    </div>
+
+                    <div className="flex gap-2">
+                        <button onClick={() => setPaymentStep(1)} className="flex-1 border py-3 text-[10px] uppercase font-bold">Back</button>
+                        <button onClick={confirmPayment} className="flex-1 bg-black text-white py-3 text-[10px] uppercase font-bold tracking-widest">Confirm & Upload</button>
+                    </div>
+                </div>
+            )}
           </div>
         </div>
       )}

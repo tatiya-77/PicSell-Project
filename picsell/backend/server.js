@@ -58,14 +58,11 @@ app.post('/api/login', (req, res) => {
     });
 });
 
-// --- แก้ไขใหม่: ลืมรหัสผ่าน (เพิ่มการเช็ค Email) ---
 app.post('/api/reset-password', (req, res) => {
     const { username, email, newPassword } = req.body;
     if (!username || !email || !newPassword) {
         return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน (Username, Email, New Password)" });
     }
-
-    // เช็คทั้ง Username และ Email ว่าตรงกันไหม
     db.query("SELECT * FROM users WHERE username = ? AND email = ?", [username, email], (err, results) => {
         if (err) return res.status(500).json({ message: "Database Error" });
         if (results.length === 0) return res.status(404).json({ message: "ข้อมูลไม่ถูกต้อง Username หรือ Email ไม่ตรงกับในระบบ" });
@@ -123,9 +120,58 @@ app.delete('/api/admin/users/:id', (req, res) => {
 });
 
 app.delete('/api/admin/products/:id', (req, res) => {
-    db.query("DELETE FROM products WHERE id = ?", [req.params.id], (err, result) => {
-        if (err) return res.status(500).json({ message: "Delete artwork failed" });
-        res.json({ message: "Artwork deleted by admin" });
+    const { id } = req.params;
+    db.query("SELECT thumbnail_path FROM products WHERE id = ?", [id], (err, results) => {
+        if (err) return res.status(500).json({ message: "Database Error" });
+        if (results && results.length > 0) {
+            const thumbnailPath = results[0].thumbnail_path;
+            db.query("DELETE FROM orders WHERE product_id = ?", [id], (orderErr) => {
+                if (orderErr) return res.status(500).json({ message: "ไม่สามารถลบประวัติการขายได้" });
+                db.query("DELETE FROM products WHERE id = ?", [id], (prodErr) => {
+                    if (prodErr) return res.status(500).json({ message: "ไม่สามารถลบสินค้าได้" });
+                    if (thumbnailPath) {
+                        const cleanPath = thumbnailPath.startsWith('/') ? thumbnailPath.substring(1) : thumbnailPath;
+                        const filePath = path.join(__dirname, cleanPath);
+                        if (fs.existsSync(filePath)) {
+                            try { fs.unlinkSync(filePath); } catch (fErr) { console.error(fErr); }
+                        }
+                    }
+                    res.json({ success: true, message: "Admin ได้ลบผลงานและข้อมูลที่เกี่ยวข้องเรียบร้อยแล้ว" });
+                });
+            });
+        } else {
+            res.status(404).json({ message: "ไม่พบสินค้าที่ต้องการลบ" });
+        }
+    });
+});
+
+app.get('/api/admin/sales-stats', (req, res) => {
+    const overviewSql = `SELECT SUM(amount) as total_revenue, COUNT(id) as total_sales FROM orders WHERE status = 'paid'`;
+    const dailySql = `
+        SELECT DATE(created_at) as date, COUNT(*) as units_sold, SUM(amount) as daily_total 
+        FROM orders WHERE status = 'paid'
+        GROUP BY DATE(created_at) ORDER BY date DESC LIMIT 7`;
+    const historySql = `
+        SELECT o.id, p.title as artwork_name, u.username as buyer_name, o.amount, o.status, o.created_at
+        FROM orders o
+        JOIN products p ON o.product_id = p.id
+        JOIN users u ON o.buyer_id = u.id
+        ORDER BY o.created_at DESC LIMIT 10`;
+
+    db.query(overviewSql, (err, overviewResult) => {
+        if (err) return res.status(500).json({ message: "Error fetching overview", error: err });
+        db.query(dailySql, (err, dailyResults) => {
+            if (err) return res.status(500).json({ message: "Error fetching daily stats", error: err });
+            db.query(historySql, (err, historyResults) => {
+                if (err) return res.status(500).json({ message: "Error fetching history", error: err });
+                res.json({
+                    total_revenue: overviewResult[0].total_revenue || 0,
+                    total_sales: overviewResult[0].total_sales || 0,
+                    daily_performance: dailyResults,
+                    sales_history: historyResults
+                });
+            });
+        });
     });
 });
 
@@ -163,14 +209,24 @@ app.put('/api/products/:id', (req, res) => {
 app.delete('/api/products/:id', (req, res) => {
     const { id } = req.params;
     db.query("SELECT thumbnail_path FROM products WHERE id = ?", [id], (err, results) => {
-        if (results && results.length > 0 && results[0].thumbnail_path) {
-            const filePath = path.join(__dirname, results[0].thumbnail_path);
-            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        if (err) return res.status(500).json({ message: "Database Error" });
+        if (results && results.length > 0) {
+            const thumbnailPath = results[0].thumbnail_path;
+            db.query("DELETE FROM orders WHERE product_id = ?", [id], (orderErr) => {
+                if (orderErr) return res.status(500).json({ message: "ลบประวัติการซื้อไม่สำเร็จ" });
+                db.query("DELETE FROM products WHERE id = ?", [id], (prodErr) => {
+                    if (prodErr) return res.status(500).json({ message: "ลบสินค้าไม่สำเร็จ" });
+                    if (thumbnailPath) {
+                        const cleanPath = thumbnailPath.startsWith('/') ? thumbnailPath.substring(1) : thumbnailPath;
+                        const filePath = path.join(__dirname, cleanPath);
+                        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                    }
+                    res.json({ success: true, message: "ลบงานศิลปะเรียบร้อยแล้ว" });
+                });
+            });
+        } else {
+            res.status(404).json({ message: "ไม่พบสินค้าที่ต้องการลบ" });
         }
-        db.query("DELETE FROM products WHERE id = ?", [id], (err) => {
-            if (err) return res.status(500).json(err);
-            res.json({ message: "ลบงานศิลปะเรียบร้อย" });
-        });
     });
 });
 
@@ -184,21 +240,26 @@ app.get('/api/user-collection/:buyer_id', (req, res) => {
         JOIN products p ON o.product_id = p.id
         WHERE o.buyer_id = ? AND o.status = 'paid'
         ORDER BY o.created_at DESC`;
-
     db.query(sql, [buyer_id], (err, results) => {
         if (err) return res.status(500).json({ message: "Database Error", error: err });
         res.json(results);
     });
 });
 
-app.post('/api/checkout', (req, res) => {
+// --- แก้ไขส่วน Checkout ให้รองรับ FormData และไฟล์สลิป ---
+app.post('/api/checkout', upload.single('slip'), (req, res) => {
     const { cart, buyer_id } = req.body;
-    if (!cart || cart.length === 0) return res.status(400).json({ message: "ไม่มีสินค้าในตะกร้า" });
+    if (!cart || !buyer_id) return res.status(400).json({ message: "ข้อมูลไม่ครบถ้วน" });
 
-    const promises = cart.map(item => {
+    // เมื่อส่งผ่าน FormData ข้อมูล cart จะเป็น String ต้อง Parse เป็น JSON
+    const cartItems = JSON.parse(cart);
+
+    const promises = cartItems.map(item => {
         return new Promise((resolve, reject) => {
             db.query("UPDATE products SET stock = stock - 1 WHERE id = ? AND stock > 0", [item.id], (err, result) => {
                 if (err) return reject(err);
+                if (result.affectedRows === 0) return reject(new Error("สินค้าหมดแล้ว"));
+
                 const sqlOrder = "INSERT INTO orders (product_id, buyer_id, seller_id, amount, status) VALUES (?, ?, ?, ?, 'paid')";
                 db.query(sqlOrder, [item.id, buyer_id, item.user_id, item.price], (orderErr) => {
                     if (orderErr) reject(orderErr);
@@ -210,7 +271,7 @@ app.post('/api/checkout', (req, res) => {
 
     Promise.all(promises)
         .then(() => res.json({ success: true }))
-        .catch(err => res.status(500).json({ message: "Checkout failed", error: err }));
+        .catch(err => res.status(500).json({ message: "Checkout failed", error: err.message }));
 });
 
 app.get('/api/sales/:seller_id', (req, res) => {
@@ -222,11 +283,31 @@ app.get('/api/sales/:seller_id', (req, res) => {
         JOIN users u ON o.buyer_id = u.id
         WHERE o.seller_id = ?
         ORDER BY o.created_at DESC`;
-
     db.query(sql, [seller_id], (err, results) => {
         if (err) return res.status(500).json(err);
         res.json(results);
     });
 });
 
-app.listen(5000, () => console.log(`Server: http://localhost:5000`));
+app.get('/api/sales-summary/:seller_id', (req, res) => {
+    const { seller_id } = req.params;
+    const totalSql = `SELECT SUM(amount) as grandTotal FROM orders WHERE seller_id = ? AND status = 'paid'`;
+    const dailySql = `
+        SELECT DATE(created_at) as date, SUM(amount) as dailyTotal, COUNT(*) as count
+        FROM orders 
+        WHERE seller_id = ? AND status = 'paid'
+        GROUP BY DATE(created_at)
+        ORDER BY DATE(created_at) DESC`;
+    db.query(totalSql, [seller_id], (err, totalResult) => {
+        if (err) return res.status(500).json(err);
+        db.query(dailySql, [seller_id], (err, dailyResults) => {
+            if (err) return res.status(500).json(err);
+            res.json({
+                grandTotal: totalResult[0].grandTotal || 0,
+                dailySummary: dailyResults
+            });
+        });
+    });
+});
+
+app.listen(5000, () => console.log(`Server running at: http://localhost:5000`));
