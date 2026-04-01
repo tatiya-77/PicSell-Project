@@ -28,20 +28,28 @@ function App() {
   
   const [editData, setEditData] = useState({ username: '', password: '' });
   
+  // --- ส่วนดึงข้อมูลโปรไฟล์ (ที่เพิ่มกลับมา) ---
   const [viewingUser, setViewingUser] = useState(null); 
   const [viewingSales, setViewingSales] = useState([]);
 
   const [summary, setSummary] = useState({ grandTotal: 0, dailySummary: [] });
 
+  // ฟังก์ชันดึงข้อมูลเมื่อแอดมินกด View
   const handleAdminViewProfile = async (targetUserId) => {
     try {
-        const userRes = await axios.get(`http://localhost:5000/api/admin/users/${targetUserId}`);
-        const salesRes = await axios.get(`http://localhost:5000/api/sales/${targetUserId}`);
-        setViewingUser(userRes.data);
-        setViewingSales(salesRes.data);
-        setCurrentView('admin_view_profile');
-        window.scrollTo(0, 0);
-    } catch (err) { alert("ไม่สามารถดึงข้อมูลโปรไฟล์ได้"); }
+      // 1. ดึงข้อมูล User รายบุคคล
+      const userRes = await axios.get(`http://localhost:5000/api/admin/users/${targetUserId}`);
+      // 2. ดึงประวัติการขายของผู้ใช้คนนั้น
+      const salesRes = await axios.get(`http://localhost:5000/api/sales/${targetUserId}`);
+      
+      setViewingUser(userRes.data);
+      setViewingSales(salesRes.data);
+      setCurrentView('admin_view_profile'); // เปลี่ยนหน้าไปโชว์รายละเอียด
+      window.scrollTo(0, 0);
+    } catch (err) {
+      console.error(err);
+      alert("ไม่สามารถดึงข้อมูลโปรไฟล์ได้ (เช็ค Backend หรือ ID)");
+    }
   };
 
   const [title, setTitle] = useState('');
@@ -168,18 +176,36 @@ function App() {
 
   const confirmDelete = async () => {
     if (!itemToDelete) return;
-    if (itemToDelete.type === 'artwork') {
-      try {
-        await axios.delete(`http://localhost:5000/api/products/${itemToDelete.id}`);
-        fetchProducts();
-      } catch (err) { alert("ลบไม่สำเร็จ"); }
-    } else {
-      const newCol = [...myCollection];
-      newCol.splice(itemToDelete.index, 1);
-      setMyCollection(newCol);
-      localStorage.setItem('collection', JSON.stringify(newCol));
+
+    try {
+      if (itemToDelete.type === 'artwork') {
+        // ลบรูปที่ลงขาย (DB + ไฟล์)
+        const res = await axios.delete(`http://localhost:5000/api/products/${itemToDelete.id}`);
+        if (res.data.success) {
+          fetchProducts();
+          // ลบออกจาก Collection ในเครื่องด้วยเผื่อกรณีซื้อของตัวเอง
+          const updatedCol = myCollection.filter(item => item.id !== itemToDelete.id);
+          setMyCollection(updatedCol);
+          localStorage.setItem('collection', JSON.stringify(updatedCol));
+          alert("ลบผลงานถาวรเรียบร้อย");
+        }
+      } else {
+        // ลบรูปในคอลเลกชัน (LocalStorage)
+        const updatedCol = myCollection.filter((_, index) => index !== itemToDelete.index);
+        
+        // ✅ อัปเดต State และทับ LocalStorage ทันทีเพื่อให้หายถาวร
+        setMyCollection(updatedCol);
+        localStorage.setItem('collection', JSON.stringify(updatedCol));
+        
+        alert("ลบรูปออกจากคอลเลกชันถาวรแล้ว");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("ลบไม่สำเร็จ");
     }
+
     setShowDeleteModal(false);
+    setItemToDelete(null);
   };
 
   const handleUpdateArtwork = async (e) => {
@@ -192,14 +218,34 @@ function App() {
     } catch (err) { alert("แก้ไขไม่สำเร็จ"); }
   };
 
-  // --- ปรับปรุงฟังก์ชัน confirmPayment ให้ส่งข้อมูลแบบ FormData ---
+  const fetchMyCollection = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await axios.get(`http://localhost:5000/api/my-collection/${user.id}`);
+      setMyCollection(res.data); // อัปเดต State ด้วยข้อมูลจริงจาก DB
+      localStorage.setItem('collection', JSON.stringify(res.data)); // สำรองไว้ในเครื่อง
+    } catch (err) {
+      console.error("Fetch collection failed", err);
+    }
+  }, [user]);
+
+  // --- 2. แก้ไข useEffect ให้โหลด Collection ทุกครั้งที่เข้าหน้า Profile ---
+  useEffect(() => {
+    if (currentView === 'profile' && user) {
+        fetchSales();
+        fetchSummary(); 
+        fetchMyCollection(); // ✅ ดึงรูปที่ซื้อแล้วจาก Database มาโชว์
+    }
+  }, [currentView, user, fetchSales, fetchSummary, fetchMyCollection]);
+
+  // --- 3. แก้ไข confirmPayment ให้เรียกดึงข้อมูลใหม่ทันทีที่ซื้อเสร็จ ---
   const confirmPayment = async () => {
     if (!selectedFile) return alert("กรุณาแนบสลิปเงินโอน");
 
     const formData = new FormData();
     formData.append('slip', selectedFile);
     formData.append('buyer_id', user.id);
-    formData.append('cart', JSON.stringify(cart)); // แปลงเป็น String เพื่อส่งผ่าน FormData
+    formData.append('cart', JSON.stringify(cart));
     formData.append('payment_method', paymentMethod);
 
     try {
@@ -208,32 +254,32 @@ function App() {
       });
       
       if (res.data.success) {
-        const purchased = cart.map(c => ({ ...products.find(p => p.id === c.id), buyer_id: user.id }));
-        const newCol = [...myCollection, ...purchased];
-        setMyCollection(newCol);
-        localStorage.setItem('collection', JSON.stringify(newCol));
+        alert("ชำระเงินสำเร็จ! กำลังเพิ่มรูปเข้าคอลเลกชัน...");
         
-        setCart([]); 
-        setShowCart(false); 
-        setShowPaymentModal(false); 
-        setPaymentStep(1); 
-        setSelectedFile(null); 
-        setIsSuccess(true); 
-        fetchProducts();
+        await fetchMyCollection(); // ✅ ดึงข้อมูลล่าสุดจาก DB มาแสดงทันที
+        
+        setCart([]);
+        setShowCart(false);
+        setShowPaymentModal(false);
+        setPaymentStep(1);
+        setSelectedFile(null);
+        setIsSuccess(true);
+        fetchProducts(); 
       }
     } catch (err) { 
       console.error(err);
-      alert(err.response?.data?.message || "Payment failed"); 
+      alert("การชำระเงินขัดข้อง"); 
     }
   };
-
   const downloadImage = (url, fileName) => {
     const link = document.createElement('a');
     link.href = url; link.download = fileName; document.body.appendChild(link);
     link.click(); document.body.removeChild(link);
   };
 
-  return (
+  // --- จบส่วน Logic ต่อไปคือส่วน Return  ---
+
+return (
     <div className="min-h-screen bg-[#FDFCF0] font-serif text-[#333]">
       <nav className="bg-white border-b border-[#E8E6D1] px-10 py-6 sticky top-0 z-[60] flex justify-between items-center shadow-sm">
         <h1 className="text-2xl tracking-[0.3em] uppercase font-light cursor-pointer" onClick={() => setCurrentView('gallery')}>PicSell</h1>
@@ -250,6 +296,76 @@ function App() {
           {!isLoggedIn && <button onClick={() => setShowAuthModal(true)} className="bg-black text-white px-5 py-2">Sign In</button>}
         </div>
       </nav>
+      {/* 🟢 เริ่มแทรกตรงนี้ (ต่อจาก Nav) */}
+      <div className="p-10 max-w-7xl mx-auto">
+        {currentView === 'admin_view_profile' && viewingUser ? (
+            <div className="animate-fadeIn">
+                <button onClick={() => setCurrentView('profile')} className="text-[10px] uppercase tracking-widest mb-10 border border-black px-4 py-2">← Back to Dashboard</button>
+                <div className="mb-10 border-b pb-10">
+                    <h2 className="text-4xl tracking-widest uppercase font-light">User Profile (Admin View)</h2>
+                    <p className="text-[10px] text-blue-500 mt-3 italic uppercase font-bold">Username: {viewingUser.username}</p>
+                    <p className="text-[10px] text-gray-400 uppercase">Email: {viewingUser.email}</p>
+                </div>
+
+                <h3 className="text-[10px] font-bold tracking-widest uppercase mb-10 border-l-2 border-blue-400 pl-4">Artworks by {viewingUser.username}</h3>
+                <div className="grid grid-cols-4 gap-10 mb-20">
+                    {products.filter(p => p.user_id === viewingUser.id).map((p) => (
+                        <div key={p.id} className="bg-white p-5 border">
+                            <img src={`http://localhost:5000${p.thumbnail_path}`} className="w-full aspect-[3/4] object-cover mb-2" alt="" />
+                            <p className="text-[10px] font-bold uppercase truncate">{p.title}</p>
+                            <p className="text-[9px] text-gray-400 uppercase">Price: ฿{p.price}</p>
+                        </div>
+                    ))}
+                </div>
+
+                <h3 className="text-[10px] font-bold tracking-widest uppercase mb-8 border-l-2 border-green-400 pl-4">Sales Report for {viewingUser.username}</h3>
+                <div className="bg-white border overflow-hidden shadow-sm mb-20">
+                    <table className="w-full text-left text-[10px] uppercase">
+                        <thead>
+                            <tr className="bg-gray-50 border-b">
+                                <th className="p-4">Artwork</th>
+                                <th className="p-4">Buyer</th>
+                                <th className="p-4">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {viewingSales.map((s) => (
+                                <tr key={s.id} className="border-b">
+                                    <td className="p-4 font-bold">{s.product_name}</td>
+                                    <td className="p-4 text-gray-400">{s.buyer_name}</td>
+                                    <td className="p-4">฿{s.amount}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        ) : currentView === 'profile' ? (
+          <div className="animate-fadeIn">
+            <div className="mb-10 border-b pb-10 flex justify-between items-end">
+              <div><h2 className="text-4xl tracking-widest uppercase font-light">My Account</h2><p className="text-[10px] text-gray-400 mt-3 italic uppercase">Artist: {user?.username}</p></div>
+              <button onClick={() => setIsEditingProfile(!isEditingProfile)} className="text-[10px] border border-black px-6 py-2 uppercase tracking-widest">{isEditingProfile ? "Close Settings" : "Edit Profile"}</button>
+            </div>
+            
+            {/* โค้ดส่วน My Collection และ My Artworks ของคุณ... */}
+
+            {user?.username === 'admin' && (
+              <div className="mt-20 border-t-4 border-black pt-10">
+                <AdminDashboard onViewProfile={handleAdminViewProfile} />
+              </div>
+            )}
+          </div>
+        ) : currentView === 'upload' ? (
+           <div className="max-w-md mx-auto">
+             {/* โค้ดส่วน Upload... */}
+           </div>
+        ) : (
+          <div className="grid grid-cols-4 gap-10 animate-fadeIn">
+            {/* โค้ดส่วน Gallery (Home)... */}
+          </div>
+        )}
+      </div>
+      {/* 🔴 จบส่วนที่แทรก */}
 
       <div className="p-10 max-w-7xl mx-auto">
         {currentView === 'admin_view_profile' && viewingUser ? (
@@ -314,28 +430,52 @@ function App() {
               </div>
             )}
 
-            <h3 className="text-[10px] font-bold tracking-widest uppercase mb-8 border-l-2 border-black pl-4 text-pink-400">My Collection</h3>
+            {/* ✅ ปรับปรุงส่วน My Collection ให้ดึงจากฐานข้อมูลจริง */}
+            <h3 className="text-[10px] font-bold tracking-widest uppercase mb-8 border-l-2 border-pink-400 pl-4 text-pink-500">My Collection</h3>
             <div className="grid grid-cols-4 gap-10 mb-20">
-              {myCollection.map((p, i) => user && p.buyer_id === user.id && (
-                  <div key={i} className="bg-white p-5 border group relative">
-                    <button onClick={() => {setItemToDelete({index: i, type:'col', title: p.title}); setShowDeleteModal(true);}} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 bg-black text-white text-[8px] px-2 py-1">X</button>
-                    <img src={`http://localhost:5000${p.thumbnail_path}`} className="w-full aspect-[3/4] object-cover mb-2" alt="" />
+              {myCollection.length > 0 ? myCollection.map((p, i) => (
+                  <div key={i} className="bg-white p-5 border group relative shadow-sm hover:shadow-md transition-shadow">
+                    <button 
+                      onClick={() => {setItemToDelete({index: i, type:'col', title: p.title}); setShowDeleteModal(true);}} 
+                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 bg-black text-white text-[8px] px-2 py-1 z-10"
+                    >
+                      ✕
+                    </button>
+                    <div className="aspect-[3/4] overflow-hidden mb-3 bg-gray-50">
+                      <img 
+                        src={`http://localhost:5000${p.thumbnail_path}`} 
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                        alt={p.title} 
+                      />
+                    </div>
                     <p className="text-[10px] font-bold uppercase truncate mb-3">{p.title}</p> 
-                    <button onClick={() => downloadImage(`http://localhost:5000${p.thumbnail_path}`, `${p.title}.jpg`)} className="w-full bg-gray-100 py-2 text-[8px] uppercase font-bold">Download</button>
+                    <button 
+                      onClick={() => downloadImage(`http://localhost:5000${p.thumbnail_path}`, `${p.title}.jpg`)} 
+                      className="w-full bg-black text-white py-2 text-[8px] uppercase font-bold hover:bg-gray-800 transition-colors"
+                    >
+                      Download Art
+                    </button>
                   </div>
-              ))}
+              )) : (
+                <div className="col-span-4 py-20 text-center border-2 border-dashed border-gray-100">
+                  <p className="text-[10px] uppercase tracking-widest text-gray-400">No artworks in your collection yet.</p>
+                </div>
+              )}
             </div>
 
-            <h3 className="text-[10px] font-bold tracking-widest uppercase mb-10 opacity-40 border-l-2 border-black pl-4 text-blue-400">My Artworks</h3>
+            <h3 className="text-[10px] font-bold tracking-widest uppercase mb-10 border-l-2 border-blue-400 pl-4 text-blue-500">My Artworks</h3>
             <div className="grid grid-cols-4 gap-10 mb-20">
               {products.filter(p => p.user_id === user?.id).map((p) => (
                 <div key={p.id} className="bg-white p-5 border group relative">
-                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 flex gap-1">
-                    <button onClick={() => {setItemToEdit(p); setShowEditModal(true);}} className="bg-gray-200 text-[8px] px-2 py-1">✎</button>
-                    <button onClick={() => {setItemToDelete({id: p.id, type:'artwork', title: p.title}); setShowDeleteModal(true);}} className="bg-black text-white text-[8px] px-2 py-1">X</button>
+                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 flex gap-1 z-10">
+                    <button onClick={() => {setItemToEdit(p); setShowEditModal(true);}} className="bg-white text-black border border-black text-[8px] px-2 py-1 hover:bg-black hover:text-white transition-all">✎</button>
+                    <button onClick={() => {setItemToDelete({id: p.id, type:'artwork', title: p.title}); setShowDeleteModal(true);}} className="bg-black text-white text-[8px] px-2 py-1">✕</button>
                   </div>
-                  <img src={`http://localhost:5000${p.thumbnail_path}`} className="w-full aspect-[3/4] object-cover mb-2" alt="" />
+                  <div className="aspect-[3/4] overflow-hidden mb-2 bg-gray-50">
+                    <img src={`http://localhost:5000${p.thumbnail_path}`} className="w-full h-full object-cover" alt="" />
+                  </div>
                   <p className="text-[10px] font-bold uppercase truncate">{p.title}</p>
+                  <p className="text-[9px] text-gray-400 mt-1">STOCK: {p.stock}</p>
                 </div>
               ))}
             </div>
@@ -405,7 +545,7 @@ function App() {
                 </table>
             </div>
 
-            {user?.username === 'admin' && (
+            {user?.role === 'admin' && (
               <div className="mt-20 border-t-4 border-black pt-10">
                 <AdminDashboard onViewProfile={handleAdminViewProfile} />
               </div>
@@ -506,7 +646,6 @@ function App() {
         </div>
       )}
 
-      {/* --- ส่วนที่ปรับปรุง: Payment Modal ให้มีช่องแนบสลิปและปุ่มที่ทำงานร่วมกับ confirmPayment ใหม่ --- */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-6 backdrop-blur-sm">
           <div className="bg-white p-10 max-w-sm w-full text-center shadow-2xl">
@@ -552,7 +691,7 @@ function App() {
                         <input 
                             type="file" 
                             accept="image/*"
-                            onChange={(e) => setSelectedFile(e.target.files[0])} // เก็บไฟล์ลง selectedFile
+                            onChange={(e) => setSelectedFile(e.target.files[0])} 
                             className="w-full text-[10px] border p-2 cursor-pointer bg-white"
                         />
                     </div>
@@ -563,13 +702,20 @@ function App() {
                     </div>
                 </div>
             )}
+            
           </div>
         </div>
       )}
 
       {isSuccess && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[200] p-4 animate-fadeIn" onClick={() => setIsSuccess(false)}>
-          <div className="bg-white p-16 text-center max-w-md w-full shadow-2xl relative"><div className="text-6xl mb-6">✨</div><h2 className="text-2xl tracking-widest uppercase mb-4 font-light">Success</h2><button onClick={() => {setIsSuccess(false); setCurrentView('profile');}} className="bg-black text-white px-10 py-4 text-[10px] uppercase font-bold tracking-widest">View Collection</button></div>
+          <div className="bg-white p-16 text-center max-w-md w-full shadow-2xl relative">
+            <div className="text-6xl mb-6">✨</div>
+            <h2 className="text-2xl tracking-widest uppercase mb-4 font-light">Success</h2>
+            <button onClick={() => {setIsSuccess(false); setCurrentView('profile');}} className="bg-black text-white px-10 py-4 text-[10px] uppercase font-bold tracking-widest">
+              View Collection
+            </button>
+          </div>
         </div>
       )}
     </div>
