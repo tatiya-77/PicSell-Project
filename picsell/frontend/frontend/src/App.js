@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import AdminDashboard from './AdminDashboard';
+import CouponSystem from './CouponSystem'; // เพิ่มบรรทัดนี้ต่อจาก import AdminDashboard
 
 function App() {
   const [products, setProducts] = useState([]);
@@ -63,6 +64,25 @@ function App() {
   const [itemToEdit, setItemToEdit] = useState({ id: '', title: '', price: '', stock: 0 });
 
   const [sales, setSales] = useState([]);
+  const [couponCode, setCouponCode] = useState('');
+  const [discount, setDiscount] = useState(0);
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
+
+  const applyCoupon = () => {
+    const total = cart.reduce((s, i) => s + Number(i.price), 0);
+    
+    if (couponCode.toUpperCase() === 'SAVE10') {
+      setDiscount(total * 0.1); // 👈 ต้องมีบรรทัดนี้เพื่อส่งค่าไปที่ UI
+      setAppliedCoupon('SAVE10 (10%)');
+    } else if (couponCode.toUpperCase() === 'FREE50') {
+      setDiscount(50); // 👈 หรือระบุยอดเงินที่จะลดตรงๆ
+      setAppliedCoupon('FREE50 (฿50)');
+    } else {
+      alert("โค้ดไม่ถูกต้อง");
+      setDiscount(0);
+      setAppliedCoupon(null);
+    }
+  };
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -584,6 +604,7 @@ return (
         )}
       </div>
 
+{/* --- ส่วน Auth Modal --- */}
       {showAuthModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] backdrop-blur-sm">
           <div className="bg-white p-10 max-w-sm w-full text-center relative shadow-2xl">
@@ -614,24 +635,85 @@ return (
         </div>
       )}
 
+      {/* --- ส่วน Cart (แก้ไขให้มีระบบส่วนลด) --- */}
       {showCart && (
         <div className="fixed top-20 right-10 w-80 bg-white border shadow-2xl z-[70] p-6 animate-fadeIn">
           <h2 className="text-[10px] font-bold uppercase mb-4 border-b pb-2 tracking-widest">Cart</h2>
-          <div className="space-y-3 mb-4 max-h-40 overflow-auto">{cart.map((item, idx) => (<div key={idx} className="flex justify-between text-[10px] uppercase"><span>{item.title}</span><span>฿{item.price} <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} className="text-red-500 ml-1">✕</button></span></div>))}</div>
-          <div className="border-t pt-4"><div className="flex justify-between text-xs font-bold mb-4"><span>TOTAL</span><span>฿{cart.reduce((s,i)=>s+Number(i.price),0)}</span></div><button onClick={() => setShowPaymentModal(true)} className="w-full bg-black text-white py-3 text-[10px] uppercase tracking-widest">Checkout</button></div>
-        </div>
-      )}
-      
-      {showDeleteModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] p-4">
-          <div className="bg-white p-10 max-w-sm w-full text-center shadow-2xl border-t-4 border-black">
-            <h2 className="text-sm font-bold uppercase mb-2">Delete</h2>
-            <p className="text-[10px] text-gray-500 mb-8 uppercase">Confirm to delete "{itemToDelete?.title}"?</p>
-            <div className="flex gap-3"><button onClick={() => setShowDeleteModal(false)} className="flex-1 border py-3 text-[10px] uppercase font-bold">Cancel</button><button onClick={confirmDelete} className="flex-1 bg-black text-white py-3 text-[10px] uppercase font-bold">Confirm</button></div>
+          <div className="space-y-3 mb-4 max-h-40 overflow-auto">
+            {cart.map((item, idx) => (
+              <div key={idx} className="flex justify-between text-[10px] uppercase">
+                <span>{item.title}</span>
+                <span>฿{Number(item.price).toLocaleString()} <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} className="text-red-500 ml-1">✕</button></span>
+              </div>
+            ))}
+            {cart.length === 0 && <p className="text-[9px] text-gray-400 italic text-center py-4">Cart is empty</p>}
+          </div>
+
+          {/* ✅ เรียกใช้ส่วนลด */}
+          <CouponSystem 
+            couponCode={couponCode}
+            setCouponCode={setCouponCode}
+            applyCoupon={applyCoupon}
+            appliedCoupon={appliedCoupon}
+            discount={discount}
+          />
+
+          <div className="border-t pt-4">
+            <div className="space-y-1 mb-4">
+              <div className="flex justify-between text-[10px] text-gray-400 uppercase">
+                <span>Subtotal</span>
+                <span>฿{cart.reduce((s,i)=>s+Number(i.price),0).toLocaleString()}</span>
+              </div>
+              {discount > 0 && (
+                <div className="flex justify-between text-[10px] text-red-400 uppercase font-bold">
+                  <span>Discount</span>
+                  <span>-฿{discount.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-xs font-bold border-t pt-2 mt-2 uppercase">
+                <span>Total Amount</span>
+                <span>฿{(cart.reduce((s,i)=>s+Number(i.price),0) - discount).toLocaleString()}</span>
+              </div>
+            </div>
+            <button 
+              disabled={cart.length === 0}
+              onClick={() => {setShowPaymentModal(true); setShowCart(false);}} 
+              className="w-full bg-black text-white py-3 text-[10px] uppercase tracking-widest font-bold"
+            >
+              Checkout
+            </button>
           </div>
         </div>
       )}
 
+      {/* ✅ ส่วนยืนยันการลบ (showDeleteModal) ที่หายไป */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] backdrop-blur-sm">
+          <div className="bg-white p-10 max-w-sm w-full text-center shadow-2xl border-t-4 border-black">
+            <h2 className="text-sm font-bold uppercase mb-2 tracking-widest">Confirm Delete</h2>
+            <p className="text-[10px] text-gray-400 mb-8 uppercase italic">
+              Do you want to delete "{itemToDelete?.title}"? 
+              <br/>This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowDeleteModal(false)} 
+                className="flex-1 border py-3 text-[10px] uppercase font-bold hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmDelete} 
+                className="flex-1 bg-black text-white py-3 text-[10px] uppercase font-bold hover:bg-gray-800 transition-colors"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- ส่วน Edit Artwork Modal --- */}
       {showEditModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] p-4">
           <div className="bg-white p-10 max-w-sm w-full shadow-2xl border-t-4 border-black">
@@ -646,10 +728,10 @@ return (
         </div>
       )}
 
+      {/* --- ส่วน Payment Modal --- */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-6 backdrop-blur-sm">
           <div className="bg-white p-10 max-w-sm w-full text-center shadow-2xl">
-            
             {paymentStep === 1 ? (
                 <div className="animate-fadeIn">
                     <h2 className="text-sm font-bold uppercase mb-6 border-b pb-4 tracking-widest">Select Payment Method</h2>
@@ -681,9 +763,9 @@ return (
                     <h2 className="text-sm font-bold uppercase mb-2 tracking-widest">Confirm Payment</h2>
                     <p className="text-[10px] text-gray-400 uppercase mb-6 italic">Via: {paymentMethod}</p>
                     
-                    <div className="bg-gray-50 p-6 mb-6 border-y">
+                    <div className="bg-gray-50 p-6 mb-6 border-y text-center">
                         <p className="text-[10px] uppercase text-gray-500 mb-1">Total Amount to Pay</p>
-                        <p className="text-2xl font-bold">฿{cart.reduce((s, i) => s + Number(i.price), 0).toLocaleString()}</p>
+                        <p className="text-2xl font-bold">฿{(cart.reduce((s, i) => s + Number(i.price), 0) - discount).toLocaleString()}</p>
                     </div>
 
                     <div className="mb-8 text-left">
@@ -702,11 +784,11 @@ return (
                     </div>
                 </div>
             )}
-            
           </div>
         </div>
       )}
 
+      {/* --- ส่วน Success Modal --- */}
       {isSuccess && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[200] p-4 animate-fadeIn" onClick={() => setIsSuccess(false)}>
           <div className="bg-white p-16 text-center max-w-md w-full shadow-2xl relative">
